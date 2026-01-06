@@ -1,0 +1,7 @@
+Metadata-Version: 2.4
+Name: ai-c-test-analyzer
+Version: 0.1.0
+Summary: AI-powered C/C++ code analyzer for unit testing
+License: MIT
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown

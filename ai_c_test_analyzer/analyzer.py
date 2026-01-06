@@ -34,8 +34,8 @@ class DependencyAnalyzer:
         for root, dirs, files in os.walk(self.repo_path):
             for file in files:
                 if file.endswith(('.c', '.cpp', '.h', '.hpp')):
-                    # Skip files in tests/, build/, and CMakeFiles/ directories
-                    if any(skip_dir in root.split(os.sep) for skip_dir in ['tests', 'build', 'CMakeFiles']):
+                    # Skip files in tests/, build/, CMakeFiles/, and ai_test_build/ directories
+                    if any(skip_dir in root.split(os.sep) for skip_dir in ['tests', 'build', 'CMakeFiles', 'ai_test_build']):
                         continue
                     # Skip main.cpp as it's not suitable for unit testing
                     if file == 'main.cpp':
@@ -442,12 +442,17 @@ class DependencyAnalyzer:
 
     def get_file_analysis(self, file_path: str, scan_results: Dict = None) -> Dict:
         """Generate detailed analysis for a single file in the requested JSON format"""
+        rel_path = os.path.normpath(os.path.relpath(file_path, self.repo_path))
+
         # Ensure we have a full scan first (or at least for this file and its deps)
         if scan_results is None:
             scan_results = self.perform_repo_scan()
-        
-        rel_path = os.path.relpath(file_path, self.repo_path)
-        file_functions = [f for f, info in scan_results['function_index'].items() if info['file'] == rel_path]
+
+        file_functions = [
+            f
+            for f, info in scan_results['function_index'].items()
+            if os.path.normpath(info.get('file', '')) == rel_path
+        ]
         
         # Define supported stubs (these are considered testable hardware dependencies)
         supported_stubs = {
@@ -459,14 +464,29 @@ class DependencyAnalyzer:
         
         functions_data = []
         for func_name in file_functions:
-            hw_deps = list(scan_results['hardware_flags'].get(func_name, set()))
+            func_info = scan_results['function_index'].get(func_name, {})
+            file_info = scan_results.get('file_index', {}).get(func_info.get('file', ''), {})
+
+            hw_deps_set = set()
+            body = func_info.get('body', '') or ''
+            for symbol in self.hardware_symbols:
+                if symbol in body:
+                    hw_deps_set.add(symbol)
+
+            includes = file_info.get('includes', []) or []
+            for header in self.hardware_headers:
+                if any(header in inc for inc in includes):
+                    hw_deps_set.add(header)
+
+            is_hw_flagged = bool(scan_results.get('hardware_flags', {}).get(func_name, False))
+            hw_deps = sorted(hw_deps_set)
             call_depth = scan_results['call_depths'].get(func_name, 0)
             
             # Classify function category
-            if hw_deps:
+            if hw_deps or is_hw_flagged:
                 category = "hardware"
                 is_testable = False
-                reason = f"Hardware-dependent: {', '.join(hw_deps)}"
+                reason = f"Hardware-dependent: {', '.join(hw_deps) if hw_deps else 'hardware classification'}"
             else:
                 category = "software-only"
                 is_testable = True

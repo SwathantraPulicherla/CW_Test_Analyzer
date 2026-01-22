@@ -11,6 +11,7 @@ setup(
     entry_points={
         'console_scripts': [
             'ai-c-test-analyzer=ai_c_test_analyzer.cli:main',
+            'ai-test-analyzer=ai_c_test_analyzer.cli:main',
         ],
     },
 )

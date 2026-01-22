@@ -4,6 +4,8 @@ setup.py
 ai_c_test_analyzer/__init__.py
 ai_c_test_analyzer/analyzer.py
 ai_c_test_analyzer/cli.py
+ai_c_test_analyzer/mcdc.py
+ai_c_test_analyzer/safety_policy.py
 ai_c_test_analyzer.egg-info/PKG-INFO
 ai_c_test_analyzer.egg-info/SOURCES.txt
 ai_c_test_analyzer.egg-info/dependency_links.txt

@@ -3,7 +3,6 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any
 
 # Support running as an installed module (preferred) and as a direct script.
 try:
@@ -21,99 +20,6 @@ except ImportError:
 
 from .safety_policy import SafetyPolicy, save_safety_summary
 
-
-def _export_mcdc_gaps_to_excel(payload: dict[str, Any], excel_path: Path) -> None:
-    # Lazy import so analyzer still works even if Excel deps are missing.
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, Alignment
-
-    wb = Workbook()
-
-    # Summary sheet
-    ws_summary = wb.active
-    ws_summary.title = "Summary"
-    bold = Font(bold=True)
-
-    version = payload.get('version')
-    generated_at = payload.get('generated_at')
-    source_root = payload.get('source_root')
-    files = payload.get('files') or {}
-
-    total_files = 0
-    total_decisions = 0
-    if isinstance(files, dict):
-        total_files = len(files)
-        for _, decisions in files.items():
-            if isinstance(decisions, list):
-                total_decisions += len(decisions)
-
-    rows = [
-        ("version", version),
-        ("generated_at", generated_at),
-        ("source_root", source_root),
-        ("files_with_gaps", total_files),
-        ("decisions_with_gaps", total_decisions),
-    ]
-
-    for r_idx, (k, v) in enumerate(rows, start=1):
-        ws_summary.cell(row=r_idx, column=1, value=k).font = bold
-        ws_summary.cell(row=r_idx, column=2, value=v)
-
-    ws_summary.column_dimensions['A'].width = 20
-    ws_summary.column_dimensions['B'].width = 90
-    ws_summary['B3'].alignment = Alignment(wrap_text=True)
-
-    # Detailed gaps sheet
-    ws = wb.create_sheet(title="Gaps")
-    headers = [
-        "file",
-        "kind",
-        "line",
-        "expression",
-        "conditions",
-        "required_pairs_estimate",
-    ]
-    for c_idx, h in enumerate(headers, start=1):
-        cell = ws.cell(row=1, column=c_idx, value=h)
-        cell.font = bold
-
-    ws.freeze_panes = "A2"
-
-    row = 2
-    if isinstance(files, dict):
-        for file_path, decisions in sorted(files.items(), key=lambda kv: str(kv[0])):
-            if not isinstance(decisions, list):
-                continue
-            for d in decisions:
-                if not isinstance(d, dict):
-                    continue
-                conditions = d.get('conditions')
-                if isinstance(conditions, list):
-                    conditions_str = " | ".join(str(x) for x in conditions)
-                else:
-                    conditions_str = str(conditions) if conditions is not None else ""
-
-                ws.cell(row=row, column=1, value=str(file_path))
-                ws.cell(row=row, column=2, value=d.get('kind'))
-                ws.cell(row=row, column=3, value=d.get('line'))
-                ws.cell(row=row, column=4, value=d.get('expression'))
-                ws.cell(row=row, column=5, value=conditions_str)
-                ws.cell(row=row, column=6, value=d.get('required_pairs_estimate'))
-                row += 1
-
-    ws.column_dimensions['A'].width = 55
-    ws.column_dimensions['B'].width = 12
-    ws.column_dimensions['C'].width = 8
-    ws.column_dimensions['D'].width = 60
-    ws.column_dimensions['E'].width = 60
-    ws.column_dimensions['F'].width = 22
-    for r in range(2, row):
-        ws.cell(row=r, column=4).alignment = Alignment(wrap_text=True)
-        ws.cell(row=r, column=5).alignment = Alignment(wrap_text=True)
-
-    excel_path.parent.mkdir(parents=True, exist_ok=True)
-    wb.save(excel_path)
-
 def validate_environment():
     """Validate that required tools and dependencies are available."""
     # Check for Python version
@@ -127,11 +33,6 @@ def main():
     parser.add_argument('--verbose', action='store_true', help='Enable verbose output')
     parser.add_argument('--wait-before-exit', action='store_true', help='Wait for user input before exiting')
     parser.add_argument('--no-excel-output', action='store_true', help='Disable Excel output')
-    parser.add_argument(
-        '--text-output',
-        action='store_true',
-        help='Enable auxiliary text outputs (functions.txt, file_summaries.txt, etc.)',
-    )
     parser.add_argument('--mcdc', action='store_true', help='Generate MC/DC gap analysis report (tests/analysis/mcdc_gaps.json)')
     parser.add_argument(
         '--safety-level',
@@ -167,13 +68,7 @@ def main():
     if args.disable_mcdc:
         want_mcdc = False
 
-    analyze_repo(
-        repo_path,
-        args.verbose,
-        args.no_excel_output,
-        mcdc=want_mcdc,
-        text_output=bool(args.text_output),
-    )
+    analyze_repo(repo_path, args.verbose, args.no_excel_output, mcdc=want_mcdc)
 
     # Best-effort: update safety summary.
     try:
@@ -202,14 +97,7 @@ def main():
     if args.wait_before_exit:
         input("Press Enter to exit...")
 
-def analyze_repo(
-    repo_path,
-    verbose: bool = False,
-    no_excel_output: bool = False,
-    *,
-    mcdc: bool = False,
-    text_output: bool = False,
-):
+def analyze_repo(repo_path, verbose=False, no_excel_output=False, mcdc: bool = False):
     """Analyze all C/C++ files in the repository."""
     analyzer = DependencyAnalyzer(str(repo_path))
     scan_results = analyzer.perform_repo_scan()
@@ -217,9 +105,8 @@ def analyze_repo(
     output_dir = repo_path / 'tests' / 'analysis'
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # Optional auxiliary text outputs (often duplicate the JSON/Excel report).
-    if text_output:
-        analyzer.save_repo_scan_results(scan_results, str(output_dir))
+    # Save detailed results
+    analyzer.save_repo_scan_results(scan_results, str(output_dir))
     
     # Save JSON summary
     output_file = output_dir / 'analysis.json'
@@ -235,17 +122,8 @@ def analyze_repo(
         mcdc_out = output_dir / 'mcdc_gaps.json'
         payload = analyze_repo_mcdc(repo_path)
         mcdc_out.write_text(json.dumps(payload, indent=2) + "\n", encoding='utf-8')
-        if not no_excel_output:
-            mcdc_excel = output_dir / 'mcdc_gaps.xlsx'
-            try:
-                _export_mcdc_gaps_to_excel(payload, mcdc_excel)
-            except Exception as e:
-                if verbose:
-                    print(f"[WARN] Failed to export MC/DC gaps to Excel: {e}")
         if verbose:
             print(f"MC/DC gaps saved to {mcdc_out}")
-            if not no_excel_output:
-                print(f"MC/DC Excel export saved to {mcdc_excel}")
     
     if verbose:
         print(f"Analysis saved to {output_file}")
